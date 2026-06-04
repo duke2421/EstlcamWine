@@ -376,3 +376,11 @@ Alle anderen ioctls werden unveraendert durchgereicht.
 - Nicht fuer unbeaufsichtigten Betrieb verwenden.
 - Nach Tests `serial-proxy.log` pruefen.
 - Dieses Projekt ist nicht mit Estlcam verbunden.
+
+## Spende
+
+Wenn dieser Workaround hilfreich ist, freue ich mich ueber eine kleine Spende:
+
+```text
+https://paypal.me/danielbadberg
+```
