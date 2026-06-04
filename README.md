@@ -56,13 +56,15 @@ Nuetzlich zur Diagnose, aber nicht zwingend noetig:
 - `lsusb`
 - `dmesg`
 - `strace`
+- `lsof` oder `fuser`, damit das Startskript erkennen kann, ob der serielle
+  Port bereits von einem anderen Prozess verwendet wird
 
 ## Abhaengigkeiten Installieren
 
 ### Arch Linux / CachyOS / Manjaro
 
 ```bash
-sudo pacman -S wine python gcc make
+sudo pacman -S wine python gcc make lsof psmisc
 ```
 
 Der Benutzer muss den seriellen Port oeffnen duerfen. Auf Arch-artigen Systemen
@@ -79,7 +81,7 @@ wird.
 
 ```bash
 sudo apt update
-sudo apt install wine python3 gcc make libc6-dev
+sudo apt install wine python3 gcc make libc6-dev lsof psmisc
 ```
 
 Auf Debian-artigen Systemen ist serieller Zugriff oft ueber die Gruppe `dialout`
@@ -94,7 +96,7 @@ Danach abmelden und wieder anmelden.
 ### Fedora
 
 ```bash
-sudo dnf install wine python3 gcc make glibc-devel
+sudo dnf install wine python3 gcc make glibc-devel lsof psmisc
 ```
 
 Die Gruppe fuer seriellen Zugriff unterscheidet sich je nach Distribution.
@@ -148,20 +150,37 @@ Einfacher Start:
 ./run-estlcam-proxy.sh --wineprefix "$HOME/.wine-estlcam" --device /dev/ttyUSB0
 ```
 
-Das Skript erledigt diese Schritte:
+Im normalen `stable`-Modus erledigt das Skript diese Schritte:
 
 1. Startet `serial_proxy.py` auf dem echten seriellen Geraet.
 2. Erstellt ein Pseudo-Terminal wie `/dev/pts/3`.
 3. Mappt Wine `COM4` auf dieses Pseudo-Terminal.
-4. Setzt in Estlcams CNC-Einstellungsdatei `Port=COM4`, sofern die Datei
-   existiert.
+4. Setzt in Estlcams CNC-Einstellungsdatei `Enabled=yes` und `Port=COM4`,
+   sofern die Datei existiert.
 5. Startet Estlcam mit `LD_PRELOAD=wine_tiocm_pty_shim.so`.
 6. Beendet den Proxy automatisch, wenn Estlcam geschlossen wird.
+
+Beim Start sollte eine Ausgabe in dieser Form erscheinen:
+
+```text
+Using COM4 -> /dev/pts/3 -> /dev/ttyUSB0
+Wine dosdevice: .../dosdevices/com4 -> /dev/pts/3
+Modem lines: stable
+```
 
 Der Proxy-Log wird hier geschrieben:
 
 ```text
 serial-proxy.log
+```
+
+Das Skript setzt standardmaessig `WINEDEBUG=-comm`, damit Wines serielle
+FIXME-Meldungen wie `fixme:comm:wait_on EV_RXFLAG not handled` die Konsole
+nicht fluten. Fuer Debugging kann `WINEDEBUG` explizit gesetzt werden, zum
+Beispiel:
+
+```bash
+WINEDEBUG=+comm ./run-estlcam-proxy.sh --wineprefix "$HOME/.wine-estlcam"
 ```
 
 Wenn der Controller antwortet, enthaelt der Log Daten in beide Richtungen. Bei
@@ -190,6 +209,52 @@ Typischer Aufruf:
   --baud 115200
 ```
 
+### Firmware Flashen
+
+Fuer den normalen Steuerbetrieb nutzt das Skript den Proxy und haelt DTR/RTS auf
+der echten Arduino-Seite stabil. Das verhindert unbeabsichtigte Resets.
+
+Zum Flashen der Estlcam-Firmware muss Estlcam den Arduino Nano aber ueber
+DTR/RTS direkt resetten koennen, damit der Bootloader startet. Starte Estlcam
+fuer ein Firmware-Update deshalb so:
+
+```bash
+./run-estlcam-proxy.sh \
+  --wineprefix "$HOME/.wine-estlcam" \
+  --device /dev/ttyUSB0 \
+  --modem-lines forward
+```
+
+In diesem Modus wird der Proxy komplett deaktiviert. Das Skript mappt den
+gewaehlten COM-Port direkt auf das echte serielle Geraet, zum Beispiel:
+
+```text
+COM4 -> /dev/ttyUSB0
+```
+
+Beim Start sollte eine Ausgabe in dieser Form erscheinen:
+
+```text
+Using COM4 -> /dev/ttyUSB0 directly
+Wine dosdevice: .../dosdevices/com4 -> /dev/ttyUSB0
+Proxy: disabled for firmware flashing
+```
+
+Nach dem Firmware-Update Estlcam schliessen und fuer den normalen Steuerbetrieb
+wieder ohne `--modem-lines forward` starten:
+
+```bash
+./run-estlcam-proxy.sh --wineprefix "$HOME/.wine-estlcam" --device /dev/ttyUSB0
+```
+
+Falls Estlcam nach dem Flashen die Steuerung deaktiviert hat, setzt das Skript
+beim Start automatisch wieder `Enabled=yes`. Dieses automatische Bearbeiten der
+Einstellungsdatei kann mit `--no-settings-update` deaktiviert werden.
+
+Der Modus `forward` ist fuer Bootloader-Resets nuetzlich, kann im Steuerbetrieb
+aber wieder zu dem urspruenglichen Problem oder zu unerwuenschten
+Controller-Resets fuehren. Deshalb ist `stable` der Standardmodus.
+
 Falls Estlcam in einem anderen Windows-Pfad im Wine-Prefix installiert ist:
 
 ```bash
@@ -204,6 +269,7 @@ Umgebungsvariablen werden ebenfalls unterstuetzt:
 WINEPREFIX="$HOME/.wine-estlcam" \
 SERIAL_DEVICE=/dev/ttyUSB0 \
 COM_PORT=COM4 \
+MODEM_LINES=stable \
 ./run-estlcam-proxy.sh
 ```
 
@@ -272,6 +338,18 @@ und erneut starten.
 
 Wenn Daten in beide Richtungen sichtbar sind, Estlcam aber trotzdem einen Fehler
 meldet, Log aufheben und wenn moeglich mit einer anderen Wine-Version testen.
+
+### `Serial device appears to be open already`
+
+Das Skript hat erkannt, dass `/dev/ttyUSB0` bereits von einem anderen Prozess
+geoeffnet ist. Schliesse andere Estlcam-, Wine-, Proxy- oder
+Serial-Monitor-Prozesse und starte erneut.
+
+Falls der Check falsch anschlaegt, kann er uebersprungen werden:
+
+```bash
+./run-estlcam-proxy.sh --skip-device-check --wineprefix "$HOME/.wine-estlcam"
+```
 
 ## Funktionsweise
 
